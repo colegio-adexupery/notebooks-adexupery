@@ -374,13 +374,30 @@ function horaActual() {
   var n = new Date();
   return pad(n.getHours())+':'+pad(n.getMinutes());
 }
-function notebooksEnUso() {
-  return registros.filter(function(r){return r.estado==='activo';})
-    .reduce(function(s,r){return s+parseInt(r.cantidad||0);},0);
+function notebooksEnUso(bloqueId) {
+  return registros.filter(function(r){
+    if (r.estado!=='activo') return false;
+    if (!bloqueId) return true; // sin filtro, contar todos
+    return String(r.bloque)===String(bloqueId);
+  }).reduce(function(s,r){return s+parseInt(r.cantidad||0);},0);
 }
-function notebooksReservados() {
-  return registros.filter(function(r){return r.estado==='pendiente';})
-    .reduce(function(s,r){return s+parseInt(r.cantidad||0);},0);
+function notebooksReservados(bloqueId) {
+  return registros.filter(function(r){
+    if (r.estado!=='pendiente') return false;
+    if (!bloqueId) return true; // sin filtro, contar todos
+    return String(r.bloque)===String(bloqueId);
+  }).reduce(function(s,r){return s+parseInt(r.cantidad||0);},0);
+}
+// Notebooks ocupados en un bloque especifico (activos + pendientes de ese bloque)
+function notebooksOcupadosEnBloque(bloqueId) {
+  return registros.filter(function(r){
+    return (r.estado==='activo'||r.estado==='pendiente') &&
+           String(r.bloque)===String(bloqueId);
+  }).reduce(function(s,r){return s+parseInt(r.cantidad||0);},0);
+}
+// Notebooks libres para un bloque especifico
+function notebooksLibresParaBloque(bloqueId) {
+  return Math.max(0, cfg.total - notebooksOcupadosEnBloque(bloqueId));
 }
 function actualizarHeaderFecha() {
   var d = new Date();
@@ -506,18 +523,20 @@ function renderFormPanel() {
     +'<div><label>Cantidad de notebooks</label><input type="number" id="r-cant" value="1" min="1"/></div>'
     +'</div>'
     +'<div class="form-grid form-grid-2">'
-    +'<div><label>Bloque horario</label><select id="r-bloque">'+bloqOpts+'</select></div>'
+    +'<div><label>Bloque horario</label><select id="r-bloque" onchange="actualizarDisp()">'+bloqOpts+'</select></div>'
     +'<div><label>Fecha del prestamo</label><input type="date" id="r-fecha" value="'+fecha+'" onchange="actualizarDisp()"/></div>'
     +'</div>'
-    +'<div class="disp-info" id="disp-info">Disponibles para '+fmtFecha(fecha)+': <strong>'+libres+'</strong> de '+cfg.total+' notebooks</div>'
+    +'<div class="disp-info" id="disp-info">Disponibles para ese bloque: <strong>'+libres+'</strong> de '+cfg.total+' notebooks</div>'
     +'<button class="btn '+tc.btnCls+'" onclick="agregarReserva()" id="btn-registrar">+ Registrar prestamo</button>'
     +'</div>';
 }
 function actualizarDisp() {
-  var libres = Math.max(0, cfg.total - notebooksEnUso() - notebooksReservados());
-  var fecha  = (document.getElementById('r-fecha')||{}).value || getFechaSel();
+  var bloqueEl = document.getElementById('r-bloque');
+  var bloqueId = bloqueEl ? bloqueEl.value : '1';
+  var fecha    = (document.getElementById('r-fecha')||{}).value || getFechaSel();
+  var libres   = notebooksLibresParaBloque(bloqueId);
   var el = document.getElementById('disp-info');
-  if(el) el.innerHTML = 'Disponibles para '+fmtFecha(fecha)+': <strong>'+libres+'</strong> de '+cfg.total+' notebooks';
+  if(el) el.innerHTML = 'Disponibles para ese bloque el '+fmtFecha(fecha)+': <strong>'+libres+'</strong> de '+cfg.total+' notebooks';
 }
 
 // ── BADGES ───────────────────────────────────────────────────
@@ -535,14 +554,14 @@ function estadoBadge(e) {
 
 // ── RENDER METRICAS ──────────────────────────────────────────
 function renderMetrics() {
-  var enUso = notebooksEnUso();
-  var res   = notebooksReservados();
-  var libres = Math.max(0, cfg.total - enUso - res);
+  var enUso  = notebooksEnUso();    // activos ahora (sin filtro bloque)
+  var res    = notebooksReservados(); // pendientes ahora (sin filtro bloque)
+  var libres = Math.max(0, cfg.total - enUso);
   document.getElementById('metrics').innerHTML =
     '<div class="metric"><div class="metric-val">'+cfg.total+'</div><div class="metric-lbl">Total notebooks</div></div>'+
-    '<div class="metric"><div class="metric-val verde">'+libres+'</div><div class="metric-lbl">Disponibles</div></div>'+
+    '<div class="metric"><div class="metric-val verde">'+libres+'</div><div class="metric-lbl">Disponibles ahora</div></div>'+
     '<div class="metric"><div class="metric-val ambar">'+enUso+'</div><div class="metric-lbl">En prestamo</div></div>'+
-    '<div class="metric"><div class="metric-val azul">'+res+'</div><div class="metric-lbl">Reservados</div></div>';
+    '<div class="metric"><div class="metric-val azul">'+res+'</div><div class="metric-lbl">Reservados hoy</div></div>';
 }
 
 // ── RENDER RESERVAS ──────────────────────────────────────────
@@ -727,8 +746,9 @@ function agregarReserva() {
   if(tipoActual!=='alumno'&&!asig){ mostrarError('Indica la asignatura.'); return; }
   if(tipoActual==='extraordinario'&&!motivo){ mostrarError('Indica el motivo.'); return; }
 
-  var libres = Math.max(0, cfg.total - notebooksEnUso() - notebooksReservados());
-  if(cant>libres){ mostrarError('No hay suficientes notebooks. Disponibles: '+libres); return; }
+  var bloqueSelId = (document.getElementById('r-bloque')||{}).value || '1';
+  var libresBloque = notebooksLibresParaBloque(bloqueSelId);
+  if(cant>libresBloque){ mostrarError('No hay suficientes notebooks para ese bloque. Disponibles en Bloque '+bloqueSelId+': '+libresBloque); return; }
 
   var btn = document.getElementById('btn-registrar');
   if(btn){btn.disabled=true; btn.textContent='Guardando...';}
